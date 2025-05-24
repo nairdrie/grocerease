@@ -11,18 +11,22 @@ import Modal from 'react-native-modal';
 import { getWeekLabel } from '../utils/date';
 import { useWeek } from '../context/WeekContext';
 import { getLists } from '../lib/api';
-import { useNavigation } from '@react-navigation/native';
+import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { isSameDay, startOfWeek } from 'date-fns';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, WeekList } from '../types/types';
 
 export default function CustomHeader() {
-  type HomeNav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
-  const navigation = useNavigation<HomeNav>();
+  type ListNav = NativeStackNavigationProp<RootStackParamList, 'ListScreen'>;
+  const navigation = useNavigation<ListNav>();
+  type ListRouteProp = RouteProp<RootStackParamList, 'ListScreen'>;
+  const route = useRoute<ListRouteProp>();
 
   const { selectedDate, setSelectedDate } = useWeek();
   const [lists, setLists] = useState<WeekList[]>([]);
   const [isModalVisible, setModalVisible] = useState(false);
+  
+  const { groupId } = route.params
 
   const now = new Date();
   const thisWeek = startOfWeek(now, { weekStartsOn: 1 });
@@ -63,7 +67,7 @@ export default function CustomHeader() {
   useEffect(() => {
     async function init() {
       try {
-        const fetched = await getLists();
+        const fetched = await getLists(groupId);
         setLists(fetched);
   
         // Sort lists by newest weekStart first

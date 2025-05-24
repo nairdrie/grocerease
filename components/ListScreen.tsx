@@ -7,30 +7,33 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
+  Pressable
 } from 'react-native';
 import DraggableFlatList, {
   RenderItemParams,
 } from 'react-native-draggable-flatlist';
 import { isSameDay, startOfWeek } from 'date-fns';
 import { Item, RootStackParamList, WeekList } from '../types/types';
-import { createList, getList, getLists, updateList } from '../lib/api'
+import { categorizeList, createList, getList, getLists, listenToList, updateList } from '../lib/api'
 import { LexoRank } from 'lexorank';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import uuid from 'react-native-uuid'
 
-export default function List() {
-  type HomeNav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
-  const navigation = useNavigation<HomeNav>();
-  type HomeRouteProp = RouteProp<RootStackParamList, 'Home'>;
-  const route = useRoute<HomeRouteProp>();
-  const listId = route.params?.listId;
-  const weekStart = route.params?.weekStart;
+export default function ListScreen() {
+  type ListNav = NativeStackNavigationProp<RootStackParamList, 'ListScreen'>;
+  const navigation = useNavigation<ListNav>();
+  type ListRouteProp = RouteProp<RootStackParamList, 'ListScreen'>;
+  const route = useRoute<ListRouteProp>();
+  const { groupId, listId, weekStart } = route.params
 
   const inputRefs = useRef<Record<string, TextInput | null>>({});
 
   const [items, setItems] = useState<Item[]>([]);
   const [editingId, setEditingId] = useState<string>(''); // instead of null
+
+  const [isCategorizing, setIsCategorizing] = useState(false);
+
 
   useEffect(() => {
     async function fetchList() {
@@ -44,7 +47,7 @@ export default function List() {
       // ✅ Try to fetch the list if we have an ID
       if (listId) {
         try {
-          const data = await getList(listId);
+          const data = await getList(groupId, listId);
           const rawItems = Array.isArray(data.items) ? data.items : [];
   
           const withOrder = rawItems.map((item: Item) => ({
@@ -67,7 +70,7 @@ export default function List() {
       }
   
       // 🧠 Create only if we don’t already have a list for this week
-      const existingLists: WeekList[] = await getLists();
+      const existingLists: WeekList[] = await getLists(groupId);
       const existing = existingLists.find(l =>
         isSameDay(new Date(l.weekStart), new Date(normalizedWeekStart))
       );
@@ -81,7 +84,7 @@ export default function List() {
       }
   
       // ✳️ Create new list
-      const created = await createList(normalizedWeekStart);
+      const created = await createList(groupId, normalizedWeekStart);
       setItems([]);
       setEditingId('');
       navigation.setParams({
@@ -91,7 +94,7 @@ export default function List() {
     }
   
     fetchList();
-  }, [listId, weekStart]);
+  }, [groupId,  listId, weekStart]);
   
   
   
@@ -99,13 +102,39 @@ export default function List() {
     if (!listId || items.length === 0) return;
   
     const timeout = setTimeout(() => {
-      updateList(listId, { items }).catch((err) => {
+      updateList(groupId, listId, { items }).catch((err) => {
         console.error('Error saving list:', err);
       });
     }, 300)
   
     return () => clearTimeout(timeout)
-  }, [items, listId]);
+  }, [groupId, items, listId]);
+
+  useEffect(() => {
+    if (!listId) return;
+  
+    const unsubscribe = listenToList(
+      groupId,
+      listId,
+      (data: WeekList) => {
+        setItems((prev) => {
+          if (!Array.isArray(data.items)) return prev;
+          const incoming = JSON.stringify(data.items);
+          const current = JSON.stringify(prev);
+          return current !== incoming ? data.items : prev;
+        });
+      },
+      (err: any) => {
+        console.error('Stream closed or failed:', err);
+      }
+    );
+  
+    return () => {
+      unsubscribe();
+    };
+  }, [groupId, listId]);
+  
+  
   
 
   const assignRef = useCallback(
@@ -139,10 +168,11 @@ export default function List() {
       : current.genNext()
   
     const newItem: Item = {
-      id: crypto.randomUUID(),
+      id: uuid.v4() as string,
       text: '',
       checked: false,
       order: current.between(next).toString(),
+      isSection: false,
     }
   
     const updated = [...items]
@@ -166,7 +196,7 @@ export default function List() {
   
   const deleteItem = (id: string) => {
     if (items.length === 1) {
-      const newItem = { id: Date.now().toString(), text: '', checked: false, order: LexoRank.middle().toString() };
+      const newItem = { id: Date.now().toString(), text: '', checked: false, order: LexoRank.middle().toString(), isSection: false };
       setItems([newItem]);
       setEditingId(newItem.id); // <- use the new item's ID
       return;
@@ -181,6 +211,21 @@ export default function List() {
   
     const nextId = updated[Math.max(0, index - 1)]?.id;
     setEditingId(nextId);
+  };
+
+  const handleAutoCategorize = async () => {
+    if (!listId) return;
+    setIsCategorizing(true);
+    try {
+      const newItems = await categorizeList(groupId, listId);
+      setItems(newItems);
+      // (optional) clear any “editing” flags
+      setEditingId('');
+    } catch (err) {
+      console.error('Auto-categorization failed', err);
+    } finally {
+      setIsCategorizing(false);
+    }
   };
   
 
@@ -197,18 +242,20 @@ export default function List() {
           <Text style={styles.dragIcon}>≡</Text>
         </Pressable>
 
-  
-        <TouchableOpacity
-          style={styles.checkbox}
-          onPress={() => toggleCheck(item.id)}
-        >
-          {item.checked ? <Text>✓</Text> : null}
-        </TouchableOpacity>
+        { !item.isSection && ( 
+          <TouchableOpacity
+            style={styles.checkbox}
+            onPress={() => toggleCheck(item.id)}
+          >
+            {item.checked ? <Text>✓</Text> : null}
+          </TouchableOpacity>
+        )}
+        
   
         <TextInput
           ref={assignRef(item.id)}
           value={item.text}
-          style={[styles.editInput, item.checked && styles.checked]}
+          style={[styles.editInput, item.checked && styles.checked, item.isSection && styles.sectionText]}
           onChangeText={text => updateItemText(item.id, text)}
           onFocus={() => setEditingId(item.id)}
           onKeyPress={({ nativeEvent }) => {
@@ -255,30 +302,86 @@ export default function List() {
   
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.select({ ios: 'padding', android: undefined })}
-    >
-      <DraggableFlatList
-        data={items.slice().sort((a, b) => a.order.localeCompare(b.order))}
-        onDragEnd={({ data }) => {
-          const reRanked = reRankItems(data)
-          setItems(reRanked)
-        }}
-        keyExtractor={item => item.id}
-        renderItem={renderItem}
-        scrollEnabled={false} // optional
-      />
+    <View style={{flex: 1}}>
 
-    </KeyboardAvoidingView>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.select({ ios: 'padding', android: 'height' })}
+        keyboardVerticalOffset={Platform.select({ ios: 64, android: 90 })}
+      >
+        <View style={{ flex: 1 }}>
+          <DraggableFlatList
+            data={items.slice().sort((a, b) => a.order.localeCompare(b.order))}
+            onDragEnd={({ data }) => {
+              const reRanked = reRankItems(data)
+              setItems(reRanked)
+            }}
+            keyExtractor={item => item.id}
+            renderItem={renderItem}
+            scrollEnabled={true} // optional
+            keyboardDismissMode="interactive"
+          />
+        </View>
+
+      </KeyboardAvoidingView>
+      <View style={styles.buttonRow}>
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={() => {
+          const lastOrder = items[items.length - 1]?.order ?? LexoRank.middle().toString();
+          const newItem: Item = {
+            id: uuid.v4() as string,
+            text: '',
+            checked: false,
+            order: LexoRank.parse(lastOrder).genNext().toString(),
+            isSection: false,
+          };
+          setItems((prev) => [...prev, newItem]);
+          setEditingId(newItem.id);
+          setTimeout(() => inputRefs.current[newItem.id]?.focus(), 50);
+        }}
+      >
+        <Text style={styles.buttonText}>+ Item</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={() => {
+          const lastOrder = items[items.length - 1]?.order ?? LexoRank.middle().toString();
+          const newItem: Item = {
+            id: uuid.v4() as string,
+            text: 'New Section',
+            checked: false,
+            order: LexoRank.parse(lastOrder).genNext().toString(),
+            isSection: true,
+          };
+          setItems((prev) => [...prev, newItem]);
+          setEditingId(newItem.id);
+          setTimeout(() => inputRefs.current[newItem.id]?.focus(), 50);
+        }}
+      >
+        <Text style={styles.buttonText}>+ Section</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.actionButton, isCategorizing && { opacity: 0.5 }]}
+        onPress={handleAutoCategorize}
+        disabled={isCategorizing}
+      >
+        <Text style={styles.buttonText}>
+          {isCategorizing ? 'Categorizing…' : 'Auto-Categorize'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flexGrow: 1,
+    flex: 1,
     backgroundColor: '#fff',
-    padding: 20,
+    padding: 10
   },
   itemRow: {
     flexDirection: 'row',
@@ -324,5 +427,33 @@ const styles = StyleSheet.create({
   clearText: {
     fontSize: 16,
     color: '#999',
+  },
+  sectionText: {
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  actionButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+  },
+  buttonText: {
+    fontSize: 14,
+    color: '#444',
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 100, // leave space for the button row
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: 8,
+    padding: 16,
+    borderTopWidth: 1,
+    borderColor: '#eee',
+    backgroundColor: '#fff',
   },
 });
