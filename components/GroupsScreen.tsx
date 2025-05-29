@@ -7,7 +7,8 @@ import {
   StyleSheet,
   Button
 } from 'react-native';
-import { getGroups, createGroup } from '../lib/api'; // you’ll need to implement these
+import { getGroups, createGroup } from '../lib/api';
+import { getAuth } from 'firebase/auth';               // ← assuming Firebase
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../types/types';
@@ -22,10 +23,29 @@ interface Group {
 export default function GroupsScreen() {
   const navigation = useNavigation<NavProp>();
   const [groups, setGroups] = useState<Group[]>([]);
+  const auth = getAuth();
 
   useEffect(() => {
     getGroups().then(setGroups);
   }, []);
+
+  const handleCreateGroup = async () => {
+    const user = auth.currentUser;
+    if (!user || user.isAnonymous) {
+      // if there’s no real user, send them to Login (or modal) first
+      navigation.navigate('LoginScreen' /* make sure this route exists */);
+      return;
+    }
+
+    // otherwise, proceed with creation
+    try {
+      const newGroup = await createGroup('New Group');
+      setGroups((prev) => [...prev, newGroup]);
+    } catch (err) {
+      console.error('failed to create group', err);
+      // you might show a toast or alert here
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -46,12 +66,7 @@ export default function GroupsScreen() {
 
       <Button
         title="Create Group"
-        onPress={() => {
-          // pop up a modal or navigate to a CreateGroup screen …
-          createGroup('New Group').then(newGroup => {
-            setGroups([...groups, newGroup]);
-          });
-        }}
+        onPress={handleCreateGroup}
       />
     </View>
   );

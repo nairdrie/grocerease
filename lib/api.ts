@@ -144,3 +144,14 @@ export function listenToList(
     if (ws.readyState <= 1) ws.close()
   }
 }
+
+// lib/api.ts
+export async function loginWithToken(idToken: string) {
+  const res = await fetch(`${BASE_URL}/authentication/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+  if (!res.ok) throw new Error('Login failed');
+}
+

@@ -10,6 +10,7 @@ import { RootStackParamList } from './types/types';
 import GroupsScreen from './components/GroupsScreen';
 import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
+import LoginScreen from './components/LoginScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -29,6 +30,11 @@ export default function App() {
               name="ListScreen"
               component={ListScreen}
               options={{ headerShown: true, headerTitle: () => <CustomHeader /> }}
+            />
+            <Stack.Screen
+              name="LoginScreen"
+              component={LoginScreen}
+              options={{ title: 'Login' }}
             />
           </Stack.Navigator>
         </NavigationContainer>

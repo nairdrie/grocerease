@@ -20,6 +20,7 @@ export type RootStackParamList = {
     weekStart?: string;
   };
   GroupsScreen: undefined;
+  LoginScreen: undefined;
 };
 
 // types/types.ts
