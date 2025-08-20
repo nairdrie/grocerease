@@ -6,10 +6,17 @@ export type Item = {
     isSection: boolean; // Optional property to indicate if the item is a section
   };
   
+export type Meal = {
+  id: string;
+  name: string;
+  items: Item[];
+};
+
 export type WeekList = {
     id: string; // Firestore document ID
     weekStart: string; // ISO string of week start (used as a key)
     items?: Item[];
+    meals?: Meal[];
 };
 
 export type RootStackParamList = {

@@ -155,3 +155,14 @@ export async function loginWithToken(idToken: string) {
   if (!res.ok) throw new Error('Login failed');
 }
 
+export async function suggestIngredients(
+  groupId: string,
+  mealId: string
+): Promise<Item[]> {
+  const res = await authorizedFetch(
+    `${BASE_URL}/meal/suggest/${mealId}?groupId=${groupId}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

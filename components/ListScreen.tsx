@@ -7,14 +7,16 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Pressable
+  Pressable,
+  Alert,
 } from 'react-native';
 import DraggableFlatList, {
   RenderItemParams,
 } from 'react-native-draggable-flatlist';
 import { isSameDay, startOfWeek } from 'date-fns';
-import { Item, RootStackParamList, WeekList } from '../types/types';
-import { categorizeList, createList, getList, getLists, listenToList, updateList } from '../lib/api'
+import { Item, RootStackParamList, WeekList, Meal } from '../types/types';
+import { categorizeList, createList, getList, getLists, listenToList, updateList, suggestIngredients } from '../lib/api'
+import MealsView from './MealsView';
 import { LexoRank } from 'lexorank';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -30,9 +32,12 @@ export default function ListScreen() {
   const inputRefs = useRef<Record<string, TextInput | null>>({});
 
   const [items, setItems] = useState<Item[]>([]);
+  const [meals, setMeals] = useState<Meal[]>([]);
   const [editingId, setEditingId] = useState<string>(''); // instead of null
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
 
   const [isCategorizing, setIsCategorizing] = useState(false);
+  const [viewMode, setViewMode] = useState<'ingredients' | 'meals'>('ingredients');
 
 
   useEffect(() => {
@@ -49,6 +54,7 @@ export default function ListScreen() {
         try {
           const data = await getList(groupId, listId);
           const rawItems = Array.isArray(data.items) ? data.items : [];
+          const rawMeals = Array.isArray(data.meals) ? data.meals : [];
   
           const withOrder = rawItems.map((item: Item) => ({
             ...item,
@@ -57,6 +63,7 @@ export default function ListScreen() {
   
           withOrder.sort((a: Item, b: Item) => a.order.localeCompare(b.order));
           setItems(withOrder);
+          setMeals(rawMeals);
           setEditingId(withOrder[0]?.id ?? '');
   
           setTimeout(() => {
@@ -99,16 +106,16 @@ export default function ListScreen() {
   
   
   useEffect(() => {
-    if (!listId || items.length === 0) return;
+    if (!listId) return;
   
     const timeout = setTimeout(() => {
-      updateList(groupId, listId, { items }).catch((err) => {
+      updateList(groupId, listId, { items, meals }).catch((err) => {
         console.error('Error saving list:', err);
       });
     }, 300)
   
     return () => clearTimeout(timeout)
-  }, [groupId, items, listId]);
+  }, [groupId, items, meals, listId]);
 
   useEffect(() => {
     if (!listId) return;
@@ -123,6 +130,13 @@ export default function ListScreen() {
           const current = JSON.stringify(prev);
           return current !== incoming ? data.items : prev;
         });
+        if (data.meals) {
+          setMeals((prev) => {
+            const incoming = JSON.stringify(data.meals);
+            const current = JSON.stringify(prev);
+            return current !== incoming ? data.meals : prev;
+          });
+        }
       },
       (err: any) => {
         console.error('Stream closed or failed:', err);
@@ -148,6 +162,11 @@ export default function ListScreen() {
     setItems(prev =>
       prev.map(item => (item.id === id ? { ...item, text } : item))
     );
+    setMeals(prev =>
+        prev.map(meal =>
+            meal.id === id ? {...meal, name: text} : meal
+        )
+    )
   };
 
   const toggleCheck = (id: string) => {
@@ -227,11 +246,92 @@ export default function ListScreen() {
       setIsCategorizing(false);
     }
   };
+
+  const addMeal = () => {
+    const newMeal: Meal = {
+      id: uuid.v4() as string,
+      name: 'New Meal',
+      items: [],
+    };
+    setMeals(prev => [...prev, newMeal]);
+  };
+
+  const deleteMeal = (mealId: string) => {
+    const mealToDelete = meals.find(meal => meal.id === mealId);
+    if (mealToDelete) {
+      setItems(prev => [...prev, ...mealToDelete.items]);
+    }
+    setMeals(prev => prev.filter(meal => meal.id !== mealId));
+  };
+
+  const handleSuggestIngredients = async (mealId: string) => {
+    if (!listId) return;
+    try {
+      const suggestedItems = await suggestIngredients(groupId, mealId);
+      Alert.alert(
+        'Suggested Ingredients',
+        suggestedItems.map(item => item.text).join('\n'),
+        [
+          {
+            text: 'Add to meal',
+            onPress: () => {
+              setMeals(prevMeals =>
+                prevMeals.map(meal => {
+                  if (meal.id === mealId) {
+                    return {
+                      ...meal,
+                      items: [...meal.items, ...suggestedItems],
+                    };
+                  }
+                  return meal;
+                })
+              );
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    } catch (error) {
+      console.error('Error suggesting ingredients:', error);
+      Alert.alert('Error', 'Could not suggest ingredients.');
+    }
+  };
   
 
   const renderItem = ({ item, drag }: RenderItemParams<Item>) => {
-    const isEditing = item.id === editingId;
+    const isEditing = editingId === item.id;
   
+    if (item.isSection) {
+        const isEditingMeal = editingMealId === item.id;
+        if (viewMode === 'meals') {
+            return (
+                <View style={styles.mealHeader}>
+                {isEditingMeal ? (
+                    <TextInput
+                    value={item.text}
+                    onChangeText={text => updateItemText(item.id, text)}
+                    onBlur={() => setEditingMealId(null)}
+                    autoFocus
+                    style={styles.mealNameInput}
+                    />
+                ) : (
+                    <TouchableOpacity onPress={() => setEditingMealId(item.id)}>
+                    <Text style={styles.sectionText}>{item.text}</Text>
+                    </TouchableOpacity>
+                )}
+                <View style={styles.mealActions}>
+                    <TouchableOpacity onPress={() => handleSuggestIngredients(item.id)} style={styles.suggestButton}>
+                        <Text style={styles.suggestButtonText}>Suggest</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteMeal(item.id)} style={styles.deleteButton}>
+                        <Text style={styles.deleteButtonText}>✕</Text>
+                    </TouchableOpacity>
+                </View>
+                </View>
+            )
+        }
+    }
+
     return (
       <View style={styles.itemRow}>
         <Pressable
@@ -299,28 +399,82 @@ export default function ListScreen() {
       </View>
     );
   };
+  const onDragEndMeals = ({ data }: { data: Item[] }) => {
+    const newMeals: Meal[] = [];
+    const newItems: Item[] = [];
+    let currentMeal: Meal | null = null;
+
+    data.forEach(item => {
+      if (item.isSection) {
+        if (currentMeal) {
+          newMeals.push(currentMeal);
+        }
+        if (item.id !== 'unassigned') {
+          currentMeal = { id: item.id, name: item.text, items: [] };
+        } else {
+          currentMeal = null;
+        }
+      } else {
+        if (currentMeal) {
+          currentMeal.items.push(item);
+        } else {
+          newItems.push(item);
+        }
+      }
+    });
+
+    if (currentMeal) {
+      newMeals.push(currentMeal);
+    }
   
+    setMeals(newMeals);
+    setItems(newItems);
+  };
 
   return (
     <View style={{flex: 1}}>
-
+      <View style={styles.toggleContainer}>
+        <TouchableOpacity
+          style={[styles.toggleButton, viewMode === 'ingredients' && styles.toggleButtonActive]}
+          onPress={() => setViewMode('ingredients')}
+        >
+          <Text style={[styles.toggleButtonText, viewMode === 'ingredients' && styles.toggleButtonTextActive]}>Ingredients</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.toggleButton, viewMode === 'meals' && styles.toggleButtonActive]}
+          onPress={() => setViewMode('meals')}
+        >
+          <Text style={[styles.toggleButtonText, viewMode === 'meals' && styles.toggleButtonTextActive]}>Meals</Text>
+        </TouchableOpacity>
+      </View>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.select({ ios: 'padding', android: 'height' })}
         keyboardVerticalOffset={Platform.select({ ios: 64, android: 90 })}
       >
         <View style={{ flex: 1 }}>
-          <DraggableFlatList
-            data={items.slice().sort((a, b) => a.order.localeCompare(b.order))}
-            onDragEnd={({ data }) => {
-              const reRanked = reRankItems(data)
-              setItems(reRanked)
-            }}
-            keyExtractor={item => item.id}
-            renderItem={renderItem}
-            scrollEnabled={true} // optional
-            keyboardDismissMode="interactive"
-          />
+          {viewMode === 'ingredients' ? (
+            <DraggableFlatList
+              data={items.slice().sort((a, b) => a.order.localeCompare(b.order))}
+              onDragEnd={({ data }) => {
+                const reRanked = reRankItems(data)
+                setItems(reRanked)
+              }}
+              keyExtractor={item => item.id}
+              renderItem={renderItem}
+              scrollEnabled={true} // optional
+              keyboardDismissMode="interactive"
+            />
+          ) : (
+            <MealsView
+              meals={meals}
+              items={items}
+              renderItem={renderItem}
+              reRankItems={reRankItems}
+              addMeal={addMeal}
+              onDragEnd={onDragEndMeals}
+            />
+          )}
         </View>
 
       </KeyboardAvoidingView>
@@ -456,4 +610,68 @@ const styles = StyleSheet.create({
     borderColor: '#eee',
     backgroundColor: '#fff',
   },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    padding: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+  },
+  toggleButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 20,
+    marginHorizontal: 5,
+  },
+  toggleButtonActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  toggleButtonText: {
+    color: '#007AFF',
+    fontWeight: '600'
+  },
+  toggleButtonTextActive: {
+    color: '#fff',
+  },
+  mealHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#f0f0f0',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+  },
+  mealNameInput: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  mealActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  suggestButton: {
+    backgroundColor: '#4CD964',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    marginLeft: 10,
+  },
+    suggestButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    deleteButton: {
+        padding: 5,
+        marginLeft: 5,
+    },
+    deleteButtonText: {
+        color: 'red',
+        fontSize: 18,
+    },
 });
